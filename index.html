@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BleedAlert Worklist</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2129; --line:#2a333d; --ink:#e8edf2; --quiet:#8b98a5;
+          --urgent:#ef4444; --unsure:#f59e0b; --routine:#22c55e; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; justify-content:space-between; padding:16px 24px; border-bottom:1px solid var(--line); }
+  h1 { font-size:20px; margin:0; }
+  .badge { font-size:12px; color:var(--quiet); }
+  main { display:grid; grid-template-columns:380px 1fr; gap:0; height:calc(100vh - 62px); }
+  #list { border-right:1px solid var(--line); overflow:auto; }
+  .drop { margin:16px; padding:20px; border:2px dashed var(--line); border-radius:10px; text-align:center; color:var(--quiet); cursor:pointer; }
+  .drop.over { border-color:var(--ink); color:var(--ink); }
+  .item { padding:14px 16px; border-bottom:1px solid var(--line); cursor:pointer; display:flex; gap:12px; align-items:center; }
+  .item:hover, .item.active { background:var(--panel); }
+  .dot { width:10px; height:10px; border-radius:50%; flex:none; }
+  .URGENT .dot { background:var(--urgent); }  .NEEDS .dot { background:var(--unsure); }  .ROUTINE .dot { background:var(--routine); }
+  .item small { color:var(--quiet); display:block; }
+  #detail { padding:24px; overflow:auto; }
+  .imgs { display:flex; gap:16px; flex-wrap:wrap; }
+  .imgs figure { margin:0; } .imgs img { width:320px; border-radius:8px; display:block; }
+  figcaption { color:var(--quiet); font-size:12px; margin-top:6px; }
+  .status { display:inline-block; padding:4px 10px; border-radius:999px; font-weight:600; font-size:13px; }
+  .s-URGENT { background:#ef444433; color:var(--urgent); }
+  .s-NEEDS { background:#f59e0b33; color:var(--unsure); }
+  .s-ROUTINE { background:#22c55e33; color:var(--routine); }
+  .summary { background:var(--panel); padding:14px; border-radius:8px; max-width:680px; line-height:1.5; }
+  button { background:var(--ink); color:var(--bg); border:0; padding:10px 16px; border-radius:8px; font-weight:600; cursor:pointer; }
+  .disclaimer { color:var(--quiet); font-size:12px; margin-top:24px; }
+  @media (max-width:800px){ main { grid-template-columns:1fr; height:auto; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>BleedAlert worklist</h1>
+  <span class="badge" id="mode"></span>
+</header>
+<main>
+  <section id="list">
+    <div class="drop" id="drop">Drop head CT slices here (.dcm or .png)<br>or click to choose</div>
+    <input type="file" id="file" multiple accept=".dcm,.png,.jpg,.jpeg" hidden>
+    <div id="items"></div>
+  </section>
+  <section id="detail"><p class="badge">Upload scans to see the queue reorder by urgency.</p></section>
+</main>
+<script>
+const API = location.origin.startsWith("http") ? "" : "http://localhost:8000";
+let selected = null, alerted = new Set();
+
+async function refresh() {
+  const rows = await (await fetch(API + "/worklist")).json();
+  const box = document.getElementById("items");
+  box.innerHTML = "";
+  rows.forEach(r => {
+    const cls = r.status.split(" ")[0];
+    const el = document.createElement("div");
+    el.className = `item ${cls}` + (r.id === selected ? " active" : "");
+    el.innerHTML = `<span class="dot"></span><div><b>${r.status}</b> · ${(r.p_any*100).toFixed(0)}%<small>${r.filename}</small></div>`;
+    el.onclick = () => { selected = r.id; show(r); refresh(); };
+    box.appendChild(el);
+    if (r.status === "URGENT" && !alerted.has(r.id)) { alerted.add(r.id); speak(r); }
+  });
+}
+
+function show(r) {
+  const cls = r.status.split(" ")[0];
+  document.getElementById("detail").innerHTML = `
+    <span class="status s-${cls}">${r.status}</span>
+    <h2>${r.filename}</h2>
+    <div class="imgs">
+      <figure><img src="data:image/png;base64,${r.scan_png}"><figcaption>Scan</figcaption></figure>
+      <figure><img src="data:image/png;base64,${r.heatmap_png}"><figcaption>Where the model is looking</figcaption></figure>
+    </div>
+    <p>Bleed probability <b>${(r.p_any*100).toFixed(1)}%</b> · most likely subtype <b>${r.subtype}</b></p>
+    <div class="summary">${r.summary}</div><br>
+    <button onclick="review('${r.id}')">Mark reviewed</button>
+    <p class="disclaimer">Triage support only. Not a diagnosis. A physician reviews every scan.</p>`;
+}
+
+async function review(id) {
+  await fetch(`${API}/scans/${id}/review`, { method: "POST" });
+  selected = null;
+  document.getElementById("detail").innerHTML = "";
+  refresh();
+}
+
+function speak(r) {
+  // Free voice alert using the browser's built in speech
+  const msg = new SpeechSynthesisUtterance(
+    `Urgent head CT. Likely ${r.subtype} bleed. Please review now.`);
+  speechSynthesis.speak(msg);
+}
+
+async function upload(files) {
+  for (const f of files) {
+    const fd = new FormData(); fd.append("file", f);
+    await fetch(API + "/scans", { method: "POST", body: fd });
+    await refresh();
+  }
+}
+
+const drop = document.getElementById("drop"), input = document.getElementById("file");
+drop.onclick = () => input.click();
+input.onchange = e => upload(e.target.files);
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); upload(e.dataTransfer.files); };
+
+fetch(API + "/health").then(r => r.json()).then(h => {
+  document.getElementById("mode").textContent = h.demo_mode ? "DEMO MODE (no trained model yet)" : "Model loaded";
+});
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>
