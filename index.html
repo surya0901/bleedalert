@@ -46,7 +46,15 @@
     <input type="file" id="file" multiple accept=".dcm,.png,.jpg,.jpeg" hidden>
     <div id="items"></div>
   </section>
-  <section id="detail"><p class="badge">Upload scans to see the queue reorder by urgency.</p></section>
+  <section id="detail">
+    <p class="badge">Upload scans to see the queue reorder by urgency.</p>
+    <div class="summary" id="sim">
+      <b>Day of scans simulation</b><br>
+      Scans per day for one remote reader: <input id="load" type="range" min="40" max="200" step="10" value="120"> <span id="loadv">120</span>
+      <p id="simout">Running...</p>
+      <small class="badge">Illustrative assumptions: 10% bleed rate, 8 min per read, 90% sensitivity, 85% specificity.</small>
+    </div>
+  </section>
 </main>
 <script>
 const API = location.origin.startsWith("http") ? "" : "http://localhost:8000";
@@ -60,7 +68,7 @@ async function refresh() {
     const cls = r.status.split(" ")[0];
     const el = document.createElement("div");
     el.className = `item ${cls}` + (r.id === selected ? " active" : "");
-    el.innerHTML = `<span class="dot"></span><div><b>${r.status}</b> · ${(r.p_any*100).toFixed(0)}%<small>${r.filename}</small></div>`;
+    el.innerHTML = `<span class="dot"></span><div><b>${r.status}</b> · ${(r.p_any*100).toFixed(0)}%<small>${r.slices} slice${r.slices>1?'s':''} · ${r.filename}</small></div>`;
     el.onclick = () => { selected = r.id; show(r); refresh(); };
     box.appendChild(el);
     if (r.status === "URGENT" && !alerted.has(r.id)) { alerted.add(r.id); speak(r); }
@@ -71,7 +79,7 @@ function show(r) {
   const cls = r.status.split(" ")[0];
   document.getElementById("detail").innerHTML = `
     <span class="status s-${cls}">${r.status}</span>
-    <h2>${r.filename}</h2>
+    <h2>${r.filename}</h2><p class="badge">Most suspicious of ${r.slices} slice${r.slices>1?'s':''} in this study</p>
     <div class="imgs">
       <figure><img src="data:image/png;base64,${r.scan_png}"><figcaption>Scan</figcaption></figure>
       <figure><img src="data:image/png;base64,${r.heatmap_png}"><figcaption>Where the model is looking</figcaption></figure>
@@ -85,8 +93,7 @@ function show(r) {
 async function review(id) {
   await fetch(`${API}/scans/${id}/review`, { method: "POST" });
   selected = null;
-  document.getElementById("detail").innerHTML = "";
-  refresh();
+  location.reload();
 }
 
 function speak(r) {
@@ -114,6 +121,16 @@ drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); upload(e
 fetch(API + "/health").then(r => r.json()).then(h => {
   document.getElementById("mode").textContent = h.demo_mode ? "DEMO MODE (no trained model yet)" : "Model loaded";
 });
+async function sim() {
+  const n = document.getElementById("load").value;
+  document.getElementById("loadv").textContent = n;
+  const r = await (await fetch(`${API}/simulate?scans_per_day=${n}`)).json();
+  document.getElementById("simout").innerHTML =
+    `Average wait for a bleed patient: <b>${r.fifo_avg_wait_min} min</b> first come first served vs ` +
+    `<b>${r.triage_avg_wait_min} min</b> with BleedAlert. <b>${r.minutes_saved} minutes sooner.</b>`;
+}
+document.getElementById("load").oninput = sim;
+sim();
 refresh(); setInterval(refresh, 5000);
 </script>
 </body>

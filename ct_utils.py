@@ -33,6 +33,25 @@ def dicom_to_rgb(raw_bytes):
     return Image.fromarray(rgb)
 
 
+def study_key(raw_bytes, filename):
+    """Which study (patient scan) a slice belongs to.
+
+    DICOM slices carry a StudyInstanceUID, so 40 uploaded slices of one head CT
+    land in one worklist row. Plain images use their file name as the study.
+    """
+    if filename.lower().endswith(".dcm"):
+        try:
+            import pydicom
+
+            ds = pydicom.dcmread(io.BytesIO(raw_bytes), stop_before_pixels=True, force=True)
+            uid = str(getattr(ds, "StudyInstanceUID", "") or "")
+            if uid:
+                return uid
+        except Exception:
+            pass
+    return filename
+
+
 def load_scan(raw_bytes, filename):
     """Accept a .dcm file or an already exported PNG/JPG."""
     if filename.lower().endswith(".dcm"):

@@ -26,8 +26,9 @@ pip install -r requirements.txt
 uvicorn app:app --reload --port 8000
 ```
 
-Open http://localhost:8000 and drop in any scan. Without a trained model it runs in
-**DEMO MODE** with fake scores, so frontend and backend work can start right away.
+Open http://localhost:8000 and drop in head CT slices (.dcm). The trained model weights
+(`bleedalert_weights.npz`, half precision) are included in the repo, so the header shows "Model loaded." If the file is missing, the app
+falls back to **DEMO MODE** with fake scores.
 
 ## 2. Train the real model on Kaggle (free GPU, about 1.5 hours)
 
@@ -67,7 +68,7 @@ model.py          model loading, prediction, Grad-CAM heatmap, demo mode
 ct_utils.py       DICOM to 3 window image
 index.html        worklist dashboard
 train_kaggle.py   Kaggle training script
-bleedalert.pt     trained model (download from Kaggle, not committed)
+bleedalert_weights.npz  trained weights, fp16 (a full bleedalert.pt from Kaggle also works)
 ```
 
 ## Team split
@@ -80,4 +81,4 @@ bleedalert.pt     trained model (download from Kaggle, not committed)
 ## Notes
 
 - Only public research data. No real patient data.
-- Do not commit `bleedalert.pt` or the dataset to GitHub (too big). Share the model by Google Drive.
+- `bleedalert_weights.npz` (about 8 MB) is committed so the app runs out of the box. Never commit the dataset.

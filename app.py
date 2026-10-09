@@ -13,8 +13,9 @@ import uuid
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from ct_utils import load_scan
+from ct_utils import load_scan, study_key
 from model import LABELS, Predictor
+from simulate import simulate
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "bleedalert.db")
 URGENT = 0.65      # at or above: urgent, jump the queue
@@ -32,7 +33,8 @@ def db():
         """CREATE TABLE IF NOT EXISTS scans (
             id TEXT PRIMARY KEY, filename TEXT, uploaded_at REAL,
             p_any REAL, subtype TEXT, status TEXT, summary TEXT,
-            scan_png TEXT, heatmap_png TEXT, reviewed INTEGER DEFAULT 0)"""
+            scan_png TEXT, heatmap_png TEXT, reviewed INTEGER DEFAULT 0,
+            study TEXT, slices INTEGER DEFAULT 1)"""
     )
     return conn
 
@@ -75,6 +77,12 @@ def health():
     return {"ok": True, "demo_mode": predictor.demo}
 
 
+@app.get("/simulate")
+def run_simulation(scans_per_day: int = 120, read_minutes: float = 8.0):
+    """Average wait for bleed patients, first come first served vs BleedAlert triage."""
+    return simulate(scans_per_day=scans_per_day, read_minutes=read_minutes)
+
+
 @app.post("/scans")
 async def upload_scan(file: UploadFile = File(...)):
     raw = await file.read()
@@ -93,14 +101,29 @@ async def upload_scan(file: UploadFile = File(...)):
     img.save(buf, format="PNG")
     scan_b64 = base64.b64encode(buf.getvalue()).decode()
 
-    scan_id = uuid.uuid4().hex[:8]
+    study = study_key(raw, file.filename)
     with db() as conn:
-        conn.execute(
-            "INSERT INTO scans VALUES (?,?,?,?,?,?,?,?,?,0)",
-            (scan_id, file.filename, time.time(), p_any, subtype, status, summary, scan_b64, heatmap_b64),
-        )
-    return {"id": scan_id, "status": status, "p_any": p_any, "subtype": subtype,
-            "scores": scores, "summary": summary}
+        row = conn.execute("SELECT * FROM scans WHERE study = ? AND reviewed = 0", (study,)).fetchone()
+        if row is None:
+            scan_id = uuid.uuid4().hex[:8]
+            conn.execute(
+                "INSERT INTO scans VALUES (?,?,?,?,?,?,?,?,?,0,?,1)",
+                (scan_id, file.filename, time.time(), p_any, subtype, status, summary,
+                 scan_b64, heatmap_b64, study),
+            )
+        else:
+            # Another slice of a study already in the queue: the study's score is its most
+            # suspicious slice, and that slice's image and heatmap are the ones shown.
+            scan_id = row["id"]
+            conn.execute("UPDATE scans SET slices = slices + 1 WHERE id = ?", (scan_id,))
+            if p_any > row["p_any"]:
+                conn.execute(
+                    "UPDATE scans SET filename=?, p_any=?, subtype=?, status=?, summary=?, "
+                    "scan_png=?, heatmap_png=? WHERE id=?",
+                    (file.filename, p_any, subtype, status, summary, scan_b64, heatmap_b64, scan_id),
+                )
+    return {"id": scan_id, "study": study, "status": status, "p_any": p_any,
+            "subtype": subtype, "scores": scores, "summary": summary}
 
 
 @app.get("/worklist")

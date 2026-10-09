@@ -1,6 +1,6 @@
 """Model loading, prediction and Grad-CAM heatmaps.
 
-If bleedalert.pt is missing (before you finish training), the app runs in
+If neither bleedalert.pt nor bleedalert_weights.npz exists (before you finish training), the app runs in
 DEMO MODE with a fake scorer so the frontend and backend team can build in parallel.
 """
 import base64
@@ -12,7 +12,9 @@ import numpy as np
 from PIL import Image
 
 LABELS = ["any", "epidural", "intraparenchymal", "intraventricular", "subarachnoid", "subdural"]
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "bleedalert.pt")
+HERE = os.path.dirname(__file__)
+WEIGHTS_NPZ = os.path.join(HERE, "bleedalert_weights.npz")  # fp16 weights, small enough for GitHub
+MODEL_PATH = os.path.join(HERE, "bleedalert.pt")            # full checkpoint straight from Kaggle
 
 
 def build_model():
@@ -26,13 +28,24 @@ def build_model():
 
 class Predictor:
     def __init__(self):
-        self.demo = not os.path.exists(MODEL_PATH)
         self.model = None
+        self.source = None
+        if os.path.exists(MODEL_PATH):
+            self.source = MODEL_PATH
+        elif os.path.exists(WEIGHTS_NPZ):
+            self.source = WEIGHTS_NPZ
+        self.demo = self.source is None
         if not self.demo:
             import torch
 
+            if self.source == MODEL_PATH:
+                state = torch.load(MODEL_PATH, map_location="cpu")
+            else:
+                arrays = np.load(WEIGHTS_NPZ)
+                state = {k: torch.from_numpy(arrays[k].astype(np.float32) if arrays[k].dtype == np.float16
+                                             else arrays[k]) for k in arrays.files}
             self.model = build_model()
-            self.model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
+            self.model.load_state_dict(state)
             self.model.eval()
 
     def predict(self, img):
@@ -43,21 +56,24 @@ class Predictor:
         import torch
         from ct_utils import to_tensor
 
-        x = to_tensor(img).requires_grad_(False)
+        x = to_tensor(img)
         target_layer = self.model.features[-1]
         acts, grads = {}, {}
-        h1 = target_layer.register_forward_hook(lambda m, i, o: acts.setdefault("a", o))
-        h2 = target_layer.register_full_backward_hook(lambda m, gi, go: grads.setdefault("g", go[0]))
 
-        logits = self.model(x)
-        probs = torch.sigmoid(logits)[0]
-        self.model.zero_grad()
-        logits[0, 0].backward()  # explain the "any bleed" output
-        h1.remove()
-        h2.remove()
+        def keep(module, inputs, output):
+            acts["a"] = output
+            output.register_hook(lambda g: grads.setdefault("g", g))
+
+        handle = target_layer.register_forward_hook(keep)
+        with torch.enable_grad():
+            logits = self.model(x)
+            probs = torch.sigmoid(logits)[0].detach()
+            self.model.zero_grad()
+            logits[0, 0].backward()  # explain the "any bleed" output
+        handle.remove()
 
         weights = grads["g"].mean(dim=(2, 3), keepdim=True)
-        cam = torch.relu((weights * acts["a"]).sum(dim=1))[0].detach().numpy()
+        cam = torch.relu((weights * acts["a"]).sum(dim=1))[0].detach().cpu().numpy()
         cam = cam / (cam.max() + 1e-8)
         scores = {lab: float(p) for lab, p in zip(LABELS, probs)}
         return scores, overlay(img, cam)
