@@ -1,0 +1,18 @@
+{
+  "epoch": 2,
+  "test_patients": 2780,
+  "test_slices": 17978,
+  "auc_any_bleed": 0.9781,
+  "auc_per_subtype": {
+    "any": 0.9781,
+    "epidural": 0.9193,
+    "intraparenchymal": 0.9711,
+    "intraventricular": 0.9838,
+    "subarachnoid": 0.9314,
+    "subdural": 0.9474
+  },
+  "sensitivity_urgent": 0.8974,
+  "sensitivity_urgent_or_review": 0.951,
+  "specificity_routine": 0.8795,
+  "share_sent_to_human_review": 0.0585
+}

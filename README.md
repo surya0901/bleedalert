@@ -40,7 +40,29 @@ falls back to **DEMO MODE** with fake scores.
    files handy for the live demo.
 6. Restart the server. The header switches from DEMO MODE to Model loaded.
 
-The script prints a validation AUC. Put that number on a slide.
+The script prints its test metrics and saves them to `metrics.json`.
+
+## Model results (patient-level test set)
+
+Tested on 17,978 slices from 2,780 patients the model never saw during training
+(every patient is in training or testing, never both).
+
+| Metric | Result |
+|---|---|
+| AUC, any bleed | 0.978 |
+| Real bleeds flagged URGENT or NEEDS HUMAN REVIEW | 95% |
+| Real bleeds flagged URGENT | 90% |
+| Normal slices correctly left ROUTINE | 88% |
+| Slices sent to human review (model unsure) | 6% |
+
+Subtype AUC: intraventricular 0.984, intraparenchymal 0.971, subdural 0.947,
+subarachnoid 0.931, epidural 0.919. Scores are per slice on a balanced 50/50 set, so they are
+not a clinical validation. Triage support only.
+
+## Demo scans
+
+`demo_scans/` holds 16 de-identified RSNA slices from TEST patients (8 bleed, 8 normal), so the
+live demo never shows an image the model trained on. Drag them into the dashboard.
 
 ## 3. Optional: Gemini summaries
 
