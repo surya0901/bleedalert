@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BleedAlert · head CT triage in your browser</title>
+<meta name="description" content="AI triage for head CT: flags likely brain bleeds and moves them to the top of the worklist. Runs entirely in your browser.">
+<style>
+  :root { --bg:#0f1419; --panel:#1a2129; --line:#2a333d; --ink:#e8edf2; --quiet:#8b98a5;
+          --urgent:#ef4444; --unsure:#f59e0b; --routine:#22c55e; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:14px 24px; border-bottom:1px solid var(--line); }
+  h1 { font-size:20px; margin:0; }
+  .tag { color:var(--quiet); font-size:13px; }
+  .tag a { color:var(--ink); }
+  main { display:grid; grid-template-columns:380px 1fr; min-height:calc(100vh - 60px); }
+  #list { border-right:1px solid var(--line); }
+  .drop { margin:16px; padding:20px; border:2px dashed var(--line); border-radius:10px; text-align:center; color:var(--quiet); cursor:pointer; }
+  .drop.over { border-color:var(--ink); color:var(--ink); }
+  .samples { margin:0 16px 16px; display:flex; flex-direction:column; gap:6px; }
+  .samples small, .note { color:var(--quiet); font-size:12px; line-height:1.45; }
+  .item { padding:14px 16px; border-top:1px solid var(--line); cursor:pointer; display:flex; gap:12px; align-items:center; }
+  .item:hover, .item.active { background:var(--panel); }
+  .dot { width:10px; height:10px; border-radius:50%; flex:none; }
+  .URGENT .dot { background:var(--urgent); } .NEEDS .dot { background:var(--unsure); } .ROUTINE .dot { background:var(--routine); }
+  .item small { color:var(--quiet); display:block; }
+  #detail { padding:24px; }
+  .imgs { display:flex; gap:16px; flex-wrap:wrap; }
+  .imgs figure { margin:0; } canvas { width:320px; max-width:100%; border-radius:8px; display:block; background:#000; }
+  figcaption { color:var(--quiet); font-size:12px; margin-top:6px; }
+  .status { display:inline-block; padding:4px 10px; border-radius:999px; font-weight:600; font-size:13px; }
+  .s-URGENT { background:#ef444433; color:var(--urgent); } .s-NEEDS { background:#f59e0b33; color:var(--unsure); } .s-ROUTINE { background:#22c55e33; color:var(--routine); }
+  .summary { background:var(--panel); padding:14px; border-radius:8px; max-width:680px; line-height:1.5; }
+  .scores { display:grid; grid-template-columns:150px 1fr 52px; gap:6px 10px; max-width:520px; font-size:14px; align-items:center; }
+  .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; } .bar i { display:block; height:100%; background:var(--quiet); }
+  button { background:var(--ink); color:var(--bg); border:0; padding:10px 16px; border-radius:8px; font-weight:600; cursor:pointer; font:inherit; }
+  button:disabled { opacity:.6; cursor:default; }
+  :focus-visible { outline:2px solid #7fb2ff; outline-offset:2px; }
+  input[type=range] { vertical-align:middle; }
+  @media (max-width:800px){ main { grid-template-columns:1fr; } #list { border-right:0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>BleedAlert worklist</h1>
+  <span class="tag" id="mode">Loading model…</span>
+</header>
+<main>
+  <section id="list" aria-label="Worklist">
+    <div class="drop" id="drop" tabindex="0" role="button">Drop head CT slices here (.dcm)<br>or click to choose</div>
+    <input type="file" id="file" multiple accept=".dcm,application/dicom" hidden>
+    <div class="samples">
+      <button id="loadDemo" type="button" disabled>Load 4 sample scans</button>
+      <small>Synthetic phantoms, not patient data. The real test scans can't be shared under the RSNA data terms.</small>
+    </div>
+    <div id="items"></div>
+  </section>
+  <section id="detail" aria-live="polite">
+    <p class="note">The model runs in your browser. Scans you add are never uploaded anywhere.</p>
+    <div class="summary" id="sim">
+      <b>Day of scans simulation</b><br>
+      Scans per day for one remote reader: <input id="load" type="range" min="40" max="200" step="10" value="120" aria-label="Scans per day"> <span id="loadv">120</span>
+      <p id="simout">Running…</p>
+      <small class="note">Illustrative assumptions, not hospital data: 10% bleed rate, 8 min per read, 90% sensitivity, 85% specificity.</small>
+    </div>
+    <p class="note">Test results on 2,780 unseen patients: AUC 0.978 for any bleed. <a style="color:var(--ink)" href="https://github.com/surya0901/bleedalert">Code, training and full results on GitHub</a>.</p>
+  </section>
+</main>
+<script src="vendor/dicomParser.min.js"></script>
+<script src="vendor/ort.wasm.min.js"></script>
+<script src="preprocess.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
