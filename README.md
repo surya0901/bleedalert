@@ -1,106 +1,125 @@
 # BleedAlert
 
-AI triage for head CT scans. Flags a likely brain bleed, moves it to the top of the
-neurologist's worklist, shows a heatmap, writes a short summary, and speaks an alert.
-Built for the 2026 Rutgers Health Hack (Sevaro track). Triage support only, not a diagnosis.
+AI triage for head CT scans. BleedAlert flags slices that likely show an intracranial
+hemorrhage and moves them to the top of the neurologist's worklist, so the scariest cases
+get read first. It shows a heatmap of where the model is looking, writes a short case
+summary with Gemini, and speaks an alert out loud.
 
-**Total cost: $0.** Everything below uses free tiers.
+Built at the 2026 Rutgers Health Hack (Sevaro track). **Triage support only, not a diagnosis.**
 
-| Piece | Free option |
-|---|---|
-| Training GPU | Kaggle Notebooks (about 30 free GPU hours a week) |
-| Data | RSNA Intracranial Hemorrhage dataset on Kaggle |
-| Model | PyTorch EfficientNet (pretrained weights are free) |
-| Backend | FastAPI + SQLite, runs on your laptop |
-| Summary | Gemini API free tier (optional, works without it) |
-| Voice alert | Browser speech, built in |
-| Hosting for judges | Run on a laptop at the table, or free tiers like Render |
-| Sponsor cloud bonus | Azure for Students ($100 credit, no card) or AWS credits from the event |
+**Live demo:** LIVE_DEMO_URL
 
-## 1. Run it locally (5 minutes)
+![BleedAlert worklist with a synthetic subdural case flagged urgent and its heatmap](docs/screenshot.png)
 
-```bash
-python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app:app --reload --port 8000
-```
+## Results
 
-Open http://localhost:8000 and drop in head CT slices (.dcm). The trained model weights
-(`bleedalert_weights.npz`, half precision) are included in the repo, so the header shows "Model loaded." If the file is missing, the app
-falls back to **DEMO MODE** with fake scores.
-
-## 2. Train the real model on Kaggle (free GPU, about 1.5 hours)
-
-1. Make a Kaggle account and verify your phone (needed for GPU).
-2. Open the RSNA Intracranial Hemorrhage Detection competition page and accept the rules.
-3. Create a new notebook, add that competition as input, set Accelerator to GPU and Internet On.
-4. Paste `train_kaggle.py` into a cell and run it.
-5. From the Output tab, download `bleedalert.pt` into the project folder and keep the `demo_scans/`
-   files handy for the live demo.
-6. Restart the server. The header switches from DEMO MODE to Model loaded.
-
-The script prints its test metrics and saves them to `metrics.json`.
-
-## Model results (patient-level test set)
-
-Tested on 17,978 slices from 2,780 patients the model never saw during training
-(every patient is in training or testing, never both).
+EfficientNet-B0 fine-tuned on the [RSNA Intracranial Hemorrhage Detection](https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection)
+dataset on free Kaggle GPUs. Tested on **17,978 slices from 2,780 patients the model never saw**
+(split by patient, so no person appears in both training and testing).
 
 | Metric | Result |
 |---|---|
-| AUC, any bleed | 0.978 |
+| AUC, any bleed | **0.978** |
 | Real bleeds flagged URGENT or NEEDS HUMAN REVIEW | 95% |
 | Real bleeds flagged URGENT | 90% |
 | Normal slices correctly left ROUTINE | 88% |
 | Slices sent to human review (model unsure) | 6% |
 
-Subtype AUC: intraventricular 0.984, intraparenchymal 0.971, subdural 0.947,
-subarachnoid 0.931, epidural 0.919. Scores are per slice on a balanced 50/50 set, so they are
-not a clinical validation. Triage support only.
+Subtype AUC: intraventricular 0.984, intraparenchymal 0.971, subdural 0.947, subarachnoid 0.931,
+epidural 0.919. Scores are per slice on a balanced 50/50 test set, so this is not a clinical
+validation. Full numbers in [`metrics.json`](metrics.json).
 
-## Demo scans
+## How it works
 
-`demo_scans/` holds 16 de-identified RSNA slices from TEST patients (8 bleed, 8 normal), so the
-live demo never shows an image the model trained on. Drag them into the dashboard.
-
-## 3. Optional: Gemini summaries
-
-Get a free key at aistudio.google.com, then before starting the server:
-
-```bash
-export GEMINI_API_KEY=your_key_here     # Windows: set GEMINI_API_KEY=your_key_here
 ```
-
-## How triage works
+DICOM slice ──► 3 CT windows as RGB ──► EfficientNet-B0 ──► 6 bleed probabilities
+                (brain, subdural, bone)                     │
+                                                            ├─► triage: URGENT / NEEDS HUMAN REVIEW / ROUTINE
+                                                            ├─► Grad-CAM heatmap
+                                                            ├─► Gemini case summary (template if no key)
+                                                            └─► SQLite worklist, urgent first, voice alert
+```
 
 | Bleed probability | Status | What happens |
 |---|---|---|
-| 65% or higher | URGENT | Top of the queue, voice alert |
-| 35% to 65% | NEEDS HUMAN REVIEW | Model is unsure, says so |
+| 65% or higher | URGENT | Top of the queue, spoken alert |
+| 35% to 65% | NEEDS HUMAN REVIEW | Model is unsure and says so |
 | below 35% | ROUTINE | Normal order |
 
-Thresholds live at the top of `app.py`.
+Slices from the same study are grouped; a study's score is its most suspicious slice.
+The dashboard also includes a queueing simulation (`simulate.py`) that compares first come,
+first served with BleedAlert triage. Its inputs are adjustable assumptions, not hospital data.
+
+## Try it
+
+The live demo has a **Load 4 sample scans** button. The RSNA license does not allow sharing
+the real test scans, so the samples are **synthetic phantoms** generated by
+[`scripts/make_phantoms.py`](scripts/make_phantoms.py): a skull, brain tissue, ventricles and,
+in three of them, a patch of fresh blood at a realistic density. They are not patient data and
+the model never saw anything like them, so they show how the app works, not how accurate it is.
+On them the model flags all three bleeds as urgent (subtype right for subdural and
+intraparenchymal, wrong for intraventricular) and sends the normal phantom to human review.
+
+You can also drop in your own de-identified head CT slices (`.dcm`).
+
+## Run it locally (free)
+
+```bash
+python -m venv venv && source venv/bin/activate      # Windows: venv\Scripts\activate
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+uvicorn app:app --reload --port 8000
+```
+
+Open http://localhost:8000. The trained weights (`bleedalert_weights.npz`, 7 MB, half precision)
+are in the repo, so the header shows **Model loaded**.
+
+Optional Gemini summaries: get a free key at aistudio.google.com and `export GEMINI_API_KEY=...`
+before starting the server.
+
+Or with Docker: `docker build -t bleedalert . && docker run -p 7860:7860 bleedalert`.
+
+## Train it yourself (free Kaggle GPU)
+
+1. Verify your phone on Kaggle (needed for GPUs) and accept the RSNA competition rules.
+2. Create a notebook, add the competition data, set Accelerator to GPU and Internet on.
+3. Run [`train_kaggle.py`](train_kaggle.py) (or `bleedalert_train.ipynb`). It splits by patient,
+   trains, prints test metrics and saves `bleedalert.pt` and `metrics.json`.
+4. Put `bleedalert.pt` next to `app.py`. It takes priority over the bundled weights.
+
+## Tests
+
+```bash
+pip install pytest httpx && pytest -q
+```
+
+The tests run the real model on the synthetic scans: health check, scoring, urgent-first
+ordering, heatmaps, review flow, bad uploads and the simulation. They also run in CI.
 
 ## Project layout
 
 ```
-app.py            API: upload, worklist, review, serves the dashboard
-model.py          model loading, prediction, Grad-CAM heatmap, demo mode
-ct_utils.py       DICOM to 3 window image
-index.html        worklist dashboard
-train_kaggle.py   Kaggle training script
-bleedalert_weights.npz  trained weights, fp16 (a full bleedalert.pt from Kaggle also works)
+app.py                 FastAPI: upload, worklist, review, sample scans, simulation, dashboard
+model.py               model loading, prediction, Grad-CAM
+ct_utils.py            DICOM to 3-window image
+index.html             worklist dashboard (voice alerts via the browser's speech API)
+simulate.py            queueing simulation, FIFO vs triage
+train_kaggle.py        training script (patient-level split)
+bleedalert_weights.npz trained weights, fp16
+demo_scans/            synthetic phantom slices
+scripts/make_phantoms.py
+tests/
+Dockerfile             used by the Hugging Face Space
 ```
 
-## Team split
+## Data and limitations
 
-- ML lead: run the Kaggle training now, it takes the longest.
-- Backend lead: Gemini summary, thresholds, maybe a day of scans simulation endpoint.
-- Frontend lead: polish `index.html`.
-- Pitch lead: talk to clinicians and Sevaro mentors, build slides, record a backup video.
+- Trained on the RSNA Intracranial Hemorrhage Detection dataset under its competition terms.
+  No scans from it are included here. The bundled weights are for research and education only.
+- Per-slice evaluation on a balanced test set; real prevalence is far lower, so precision in
+  practice would be lower too. No prospective or external validation has been done.
+- Not a medical device. A physician must review every scan.
 
-## Notes
+## License
 
-- Only public research data. No real patient data.
-- `bleedalert_weights.npz` (about 8 MB) is committed so the app runs out of the box. Never commit the dataset.
+Code: MIT. Model weights: research and educational use only (see the data terms above).

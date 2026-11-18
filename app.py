@@ -12,12 +12,15 @@ import uuid
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from ct_utils import load_scan, study_key
 from model import LABELS, Predictor
 from simulate import simulate
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "bleedalert.db")
+HERE = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get("BLEEDALERT_DB", os.path.join(HERE, "bleedalert.db"))
+DEMO_DIR = os.path.join(HERE, "demo_scans")
 URGENT = 0.65      # at or above: urgent, jump the queue
 UNSURE_LOW = 0.35  # between UNSURE_LOW and URGENT: model is unsure, send to a human
 
@@ -83,11 +86,10 @@ def run_simulation(scans_per_day: int = 120, read_minutes: float = 8.0):
     return simulate(scans_per_day=scans_per_day, read_minutes=read_minutes)
 
 
-@app.post("/scans")
-async def upload_scan(file: UploadFile = File(...)):
-    raw = await file.read()
+def ingest(raw: bytes, filename: str) -> dict:
+    """Score one slice and put it on the worklist (grouped with its study)."""
     try:
-        img = load_scan(raw, file.filename)
+        img = load_scan(raw, filename)
     except Exception as e:
         raise HTTPException(400, f"Could not read scan: {e}")
 
@@ -101,14 +103,14 @@ async def upload_scan(file: UploadFile = File(...)):
     img.save(buf, format="PNG")
     scan_b64 = base64.b64encode(buf.getvalue()).decode()
 
-    study = study_key(raw, file.filename)
+    study = study_key(raw, filename)
     with db() as conn:
         row = conn.execute("SELECT * FROM scans WHERE study = ? AND reviewed = 0", (study,)).fetchone()
         if row is None:
             scan_id = uuid.uuid4().hex[:8]
             conn.execute(
                 "INSERT INTO scans VALUES (?,?,?,?,?,?,?,?,?,0,?,1)",
-                (scan_id, file.filename, time.time(), p_any, subtype, status, summary,
+                (scan_id, filename, time.time(), p_any, subtype, status, summary,
                  scan_b64, heatmap_b64, study),
             )
         else:
@@ -120,10 +122,26 @@ async def upload_scan(file: UploadFile = File(...)):
                 conn.execute(
                     "UPDATE scans SET filename=?, p_any=?, subtype=?, status=?, summary=?, "
                     "scan_png=?, heatmap_png=? WHERE id=?",
-                    (file.filename, p_any, subtype, status, summary, scan_b64, heatmap_b64, scan_id),
+                    (filename, p_any, subtype, status, summary, scan_b64, heatmap_b64, scan_id),
                 )
     return {"id": scan_id, "study": study, "status": status, "p_any": p_any,
             "subtype": subtype, "scores": scores, "summary": summary}
+
+
+@app.post("/scans")
+async def upload_scan(file: UploadFile = File(...)):
+    return ingest(await file.read(), file.filename)
+
+
+@app.post("/demo/load")
+def load_demo():
+    """Queue the bundled synthetic slices so visitors can try the app without their own scans."""
+    names = sorted(f for f in os.listdir(DEMO_DIR) if f.endswith(".dcm")) if os.path.isdir(DEMO_DIR) else []
+    results = []
+    for name in names:
+        with open(os.path.join(DEMO_DIR, name), "rb") as fh:
+            results.append(ingest(fh.read(), name))
+    return {"loaded": len(results), "results": results}
 
 
 @app.get("/worklist")
@@ -150,9 +168,6 @@ def reset():
     return {"ok": True}
 
 
-from fastapi.responses import FileResponse
-
-
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(os.path.dirname(__file__), "index.html"))
+    return FileResponse(os.path.join(HERE, "index.html"))

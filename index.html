@@ -31,6 +31,8 @@
   .s-ROUTINE { background:#22c55e33; color:var(--routine); }
   .summary { background:var(--panel); padding:14px; border-radius:8px; max-width:680px; line-height:1.5; }
   button { background:var(--ink); color:var(--bg); border:0; padding:10px 16px; border-radius:8px; font-weight:600; cursor:pointer; }
+  .samples { margin:0 16px 16px; display:flex; flex-direction:column; gap:6px; }
+  .samples small { color:var(--quiet); font-size:12px; line-height:1.4; }
   .disclaimer { color:var(--quiet); font-size:12px; margin-top:24px; }
   @media (max-width:800px){ main { grid-template-columns:1fr; height:auto; } }
 </style>
@@ -44,6 +46,10 @@
   <section id="list">
     <div class="drop" id="drop">Drop head CT slices here (.dcm or .png)<br>or click to choose</div>
     <input type="file" id="file" multiple accept=".dcm,.png,.jpg,.jpeg" hidden>
+    <div class="samples">
+      <button id="loadDemo" type="button">Load 4 sample scans</button>
+      <small>Synthetic phantoms, not patient data. The real test scans can't be shared.</small>
+    </div>
     <div id="items"></div>
   </section>
   <section id="detail">
@@ -117,6 +123,13 @@ input.onchange = e => upload(e.target.files);
 drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
 drop.ondragleave = () => drop.classList.remove("over");
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); upload(e.dataTransfer.files); };
+
+document.getElementById("loadDemo").onclick = async (e) => {
+  e.target.disabled = true; e.target.textContent = "Scoring…";
+  await fetch(API + "/demo/load", { method: "POST" });
+  await refresh();
+  e.target.disabled = false; e.target.textContent = "Load 4 sample scans";
+};
 
 fetch(API + "/health").then(r => r.json()).then(h => {
   document.getElementById("mode").textContent = h.demo_mode ? "DEMO MODE (no trained model yet)" : "Model loaded";
